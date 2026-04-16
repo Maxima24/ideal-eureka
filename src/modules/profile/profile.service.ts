@@ -2,17 +2,18 @@ import {
   Injectable,
   BadRequestException,
   UnprocessableEntityException,
+  NotFoundException,
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import {v7 as uuidv7} from  "uuid"
+import { v7 as uuidv7 } from 'uuid';
+
 @Injectable()
 export class ProfileService {
   constructor(private readonly prisma: PrismaService) {}
 
   async createProfile(name: unknown) {
-    // Input validation
     if (name === undefined || name === null || name === '') {
       throw new BadRequestException({
         status: 'error',
@@ -36,7 +37,6 @@ export class ProfileService {
       });
     }
 
-    // Idempotency check
     const existing = await this.prisma.profile.findUnique({
       where: { name: trimmedName },
     });
@@ -49,35 +49,30 @@ export class ProfileService {
       };
     }
 
-    // Call all three APIs concurrently
     const [genderizeData, agifyData, nationalizeData] =
       await this.fetchExternalApis(trimmedName);
 
-    // Validate Genderize data
     if (!genderizeData.gender || genderizeData.count === 0) {
       throw new HttpException(
-        { status: 'error', message: 'Could not determine gender for this name' },
+        { status: 'error', message: 'Genderize returned an invalid response' },
         HttpStatus.BAD_GATEWAY,
       );
     }
 
-    // Validate Agify data
     if (agifyData.age === null || agifyData.age === undefined) {
       throw new HttpException(
-        { status: 'error', message: 'Could not determine age for this name' },
+        { status: 'error', message: 'Agify returned an invalid response' },
         HttpStatus.BAD_GATEWAY,
       );
     }
 
-    // Validate Nationalize data
     if (!nationalizeData.country || nationalizeData.country.length === 0) {
       throw new HttpException(
-        { status: 'error', message: 'Could not determine nationality for this name' },
+        { status: 'error', message: 'Nationalize returned an invalid response' },
         HttpStatus.BAD_GATEWAY,
       );
     }
 
-    // Pick highest probability country
     const topCountry = nationalizeData.country.reduce(
       (prev: any, curr: any) =>
         curr.probability > prev.probability ? curr : prev,
@@ -85,7 +80,7 @@ export class ProfileService {
 
     const saved = await this.prisma.profile.create({
       data: {
-        id:uuidv7(),
+        id: uuidv7(),
         name: trimmedName,
         gender: genderizeData.gender,
         gender_probability: genderizeData.probability,
@@ -101,6 +96,70 @@ export class ProfileService {
       status: 'success',
       data: this.formatResponse(saved),
     };
+  }
+
+  async getProfileById(id: string) {
+    const profile = await this.prisma.profile.findUnique({ where: { id } });
+
+    if (!profile) {
+      throw new NotFoundException({
+        status: 'error',
+        message: 'Profile not found',
+      });
+    }
+
+    return {
+      status: 'success',
+      data: this.formatResponse(profile),
+    };
+  }
+
+  async getAllProfiles(filters: {
+    gender?: string;
+    country_id?: string;
+    age_group?: string;
+  }) {
+    const where: Record<string, any> = {};
+
+    if (filters.gender) {
+      where.gender = filters.gender.toLowerCase();
+    }
+
+    if (filters.country_id) {
+      where.country_id = filters.country_id.toLowerCase();
+    }
+
+    if (filters.age_group) {
+      where.age_group = filters.age_group.toLowerCase();
+    }
+
+    const profiles = await this.prisma.profile.findMany({ where });
+
+    return {
+      status: 'success',
+      count: profiles.length,
+      data: profiles.map((p) => ({
+        id: p.id,
+        name: p.name,
+        gender: p.gender,
+        age: p.age,
+        age_group: p.age_group,
+        country_id: p.country_id,
+      })),
+    };
+  }
+
+  async deleteProfile(id: string) {
+    const profile = await this.prisma.profile.findUnique({ where: { id } });
+
+    if (!profile) {
+      throw new NotFoundException({
+        status: 'error',
+        message: 'Profile not found',
+      });
+    }
+
+    await this.prisma.profile.delete({ where: { id } });
   }
 
   private async fetchExternalApis(name: string) {
