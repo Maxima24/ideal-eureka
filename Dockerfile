@@ -6,6 +6,7 @@ RUN npm install -g @nestjs/cli
 
 COPY package*.json ./
 RUN npm install
+RUN npm install dotenv
 
 COPY . .
 RUN npx prisma generate
