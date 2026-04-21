@@ -1,11 +1,8 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client-js"
- 
 }
 
 datasource db {
@@ -15,14 +12,18 @@ datasource db {
 model Profile {
   id                  String   @id @default(uuid()) @db.Uuid
   name                String   @unique
-  gender              String
+  gender              String   @db.VarChar
   gender_probability  Float
-  sample_size         Int
   age                 Int
-  age_group           String
-  country_id          String
+  age_group           String   @db.VarChar
+  country_id          String   @db.VarChar(2)
+  country_name        String   @db.VarChar
   country_probability Float
   created_at          DateTime @default(now()) @db.Timestamptz
 
+  @@index([gender])
+  @@index([age_group])
+  @@index([country_id])
+  @@index([age])
   @@map("profiles")
 }
