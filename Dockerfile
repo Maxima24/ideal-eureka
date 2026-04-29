@@ -2,29 +2,28 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-RUN npm install -g @nestjs/cli
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
-COPY package*.json ./
-RUN npm install
-RUN npm install dotenv
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 COPY . .
-RUN npx prisma generate
-RUN nest build
+RUN pnpm exec prisma generate
+RUN pnpm run build
+RUN pnpm prune --prod
 
 FROM node:20-alpine AS production
 
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm install --omit=dev
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
-
-RUN npx prisma generate
+COPY --from=builder /app/package.json ./package.json
 
 EXPOSE 8080
 
-CMD ["sh", "-c", "npx prisma db push && node dist/src/main.js"]    
+CMD ["sh", "-c", "pnpm exec prisma migrate deploy && node dist/src/main.js"]
