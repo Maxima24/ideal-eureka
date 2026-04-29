@@ -7,6 +7,7 @@ import {
   Req,
   UnauthorizedException,
   UseGuards,
+  Query,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { Public } from '../../common/decorators/public.decorator';
@@ -21,25 +22,20 @@ export class AuthController {
   @Public()
   @Get('github/web')
   async handleWebCallback(
-    @Body()
-    body: {
-      code: string;
-      redirect_uri: string;
-      state?: string;
-    },
+   @Query() query: { code: string; redirect_uri?: string; state?: string },
   ) {
     console.log('=== WEB CALLBACK RECEIVED ===');
-    console.log('  redirect_uri:', JSON.stringify(body.redirect_uri));
-    console.log('  code length:', body.code?.length);
+    console.log('  redirect_uri:', JSON.stringify(query.redirect_uri));
+    console.log('  code length:', query.code?.length);
     console.log('==============================');
 
-    if (!body.code || !body.redirect_uri) {
+    if (!query.code || !query.redirect_uri) {
       throw new BadRequestException('Missing required fields: code and redirect_uri');
     }
 
     const { accessToken, refreshToken, user } = await this.authService.exchangeCodeForWeb({
-      code: body.code,
-      redirectUri: body.redirect_uri,
+      code: query.code,
+      redirectUri: query.redirect_uri,
     });
 
     return {
