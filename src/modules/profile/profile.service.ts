@@ -1,404 +1,191 @@
-import {
-  Injectable,
-  BadRequestException,
-  UnprocessableEntityException,
-} from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Prisma } from '@prisma/client';
-
-// ─── DTOs ────────────────────────────────────────────────────────────────────
-
-export interface ProfilesQueryDto {
-  gender?: string;
-  age_group?: string;
-  country_id?: string;
-  min_age?: string;
-  max_age?: string;
-  min_gender_probability?: string;
-  min_country_probability?: string;
-  sort_by?: string;
-  order?: string;
-  page?: string;
-  limit?: string;
-}
-
-export interface NLQueryDto {
-  q?: string;
-  page?: string;
-  limit?: string;
-}
-
-// ─── Country name → ISO map (extend as needed) ───────────────────────────────
-
-const COUNTRY_MAP: Record<string, string> = {
-  nigeria: 'NG',
-  ghana: 'GH',
-  kenya: 'KE',
-  angola: 'AO',
-  ethiopia: 'ET',
-  tanzania: 'TZ',
-  uganda: 'UG',
-  senegal: 'SN',
-  cameroon: 'CM',
-  'ivory coast': 'CI',
-  'cote d\'ivoire': 'CI',
-  zimbabwe: 'ZW',
-  zambia: 'ZM',
-  mozambique: 'MZ',
-  madagascar: 'MG',
-  mali: 'ML',
-  niger: 'NE',
-  guinea: 'GN',
-  benin: 'BJ',
-  togo: 'TG',
-  rwanda: 'RW',
-  burundi: 'BI',
-  chad: 'TD',
-  somalia: 'SO',
-  'south africa': 'ZA',
-  egypt: 'EG',
-  morocco: 'MA',
-  algeria: 'DZ',
-  tunisia: 'TN',
-  libya: 'LY',
-  sudan: 'SD',
-  'south sudan': 'SS',
-  'democratic republic of congo': 'CD',
-  congo: 'CG',
-  gabon: 'GA',
-  'equatorial guinea': 'GQ',
-  'central african republic': 'CF',
-  eritrea: 'ER',
-  djibouti: 'DJ',
-  comoros: 'KM',
-  'cape verde': 'CV',
-  'sao tome': 'ST',
-  seychelles: 'SC',
-  mauritius: 'MU',
-  mauritania: 'MR',
-  'western sahara': 'EH',
-  gambia: 'GM',
-  'sierra leone': 'SL',
-  liberia: 'LR',
-  'burkina faso': 'BF',
-  malawi: 'MW',
-  botswana: 'BW',
-  namibia: 'NA',
-  lesotho: 'LS',
-  swaziland: 'SZ',
-  eswatini: 'SZ',
-  'guinea-bissau': 'GW',
-};
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-const VALID_SORT_FIELDS = ['age', 'created_at', 'gender_probability'];
-const VALID_ORDERS = ['asc', 'desc'];
-const VALID_AGE_GROUPS = ['child', 'teenager', 'adult', 'senior'];
-const VALID_GENDERS = ['male', 'female'];
-
-function parsePagination(
-  page?: string,
-  limit?: string,
-): { skip: number; take: number; pageNum: number; limitNum: number } {
-  const pageNum = page !== undefined ? parseInt(page, 10) : 1;
-  const limitNum = limit !== undefined ? parseInt(limit, 10) : 10;
-
-  if (isNaN(pageNum) || isNaN(limitNum)) {
-    throw new UnprocessableEntityException('Invalid query parameters');
-  }
-  if (pageNum < 1 || limitNum < 1 || limitNum > 50) {
-    throw new BadRequestException('Invalid query parameters');
-  }
-
-  return {
-    skip: (pageNum - 1) * limitNum,
-    take: limitNum,
-    pageNum,
-    limitNum,
-  };
-}
-
-function buildWhereClause(filters: {
-  gender?: string;
-  age_group?: string;
-  country_id?: string;
-  min_age?: number;
-  max_age?: number;
-  min_gender_probability?: number;
-  min_country_probability?: number;
-}): Prisma.ProfileWhereInput {
-  const where: Prisma.ProfileWhereInput = {};
-
-  if (filters.gender !== undefined) {
-    if (!VALID_GENDERS.includes(filters.gender)) {
-      throw new BadRequestException('Invalid query parameters');
-    }
-    where.gender = filters.gender;
-  }
-
-  if (filters.age_group !== undefined) {
-    if (!VALID_AGE_GROUPS.includes(filters.age_group)) {
-      throw new BadRequestException('Invalid query parameters');
-    }
-    where.age_group = filters.age_group;
-  }
-
-  if (filters.country_id !== undefined) {
-    where.country_id = filters.country_id.toUpperCase();
-  }
-
-  if (filters.min_age !== undefined || filters.max_age !== undefined) {
-    where.age = {};
-    if (filters.min_age !== undefined) {
-      (where.age as Prisma.IntFilter).gte = filters.min_age;
-    }
-    if (filters.max_age !== undefined) {
-      (where.age as Prisma.IntFilter).lte = filters.max_age;
-    }
-  }
-
-  if (filters.min_gender_probability !== undefined) {
-    where.gender_probability = { gte: filters.min_gender_probability };
-  }
-
-  if (filters.min_country_probability !== undefined) {
-    where.country_probability = { gte: filters.min_country_probability };
-  }
-
-  return where;
-}
-
-// ─── Natural Language Parser ─────────────────────────────────────────────────
-
-interface ParsedNLQuery {
-  gender?: string;
-  age_group?: string;
-  country_id?: string;
-  min_age?: number;
-  max_age?: number;
-}
-
-function parseNaturalLanguageQuery(q: string): ParsedNLQuery | null {
-  const lower = q.toLowerCase().trim();
-
-  if (!lower) return null;
-
-  const result: ParsedNLQuery = {};
-
-  // ── Gender ──────────────────────────────────────────────────────────────
-  if (/\bmales?\b/.test(lower) && !/\bfemales?\b/.test(lower)) {
-    result.gender = 'male';
-  } else if (/\bfemales?\b/.test(lower) && !/\bmales?\b/.test(lower)) {
-    result.gender = 'female';
-  }
-  // "male and female" → no gender filter (both)
-
-  // ── Age group ────────────────────────────────────────────────────────────
-  if (/\bchildren\b|\bchild\b/.test(lower)) {
-    result.age_group = 'child';
-  } else if (/\bteenagers?\b/.test(lower)) {
-    result.age_group = 'teenager';
-  } else if (/\badults?\b/.test(lower)) {
-    result.age_group = 'adult';
-  } else if (/\bseniors?\b|\belderly\b|\bold people\b/.test(lower)) {
-    result.age_group = 'senior';
-  } else if (/\byoung\b/.test(lower)) {
-    // "young" → 16–24 (not a stored age_group, parsed as age range)
-    result.min_age = 16;
-    result.max_age = 24;
-  }
-
-  // ── Explicit age expressions ─────────────────────────────────────────────
-  // "above 30" / "over 30" / "older than 30"
-  const aboveMatch = lower.match(/\b(?:above|over|older than|greater than|more than)\s+(\d+)/);
-  if (aboveMatch) {
-    result.min_age = parseInt(aboveMatch[1], 10);
-    // clear "young" range if explicit age provided
-    if (result.max_age === 24 && result.min_age > 16) {
-      delete result.max_age;
-    }
-  }
-
-  // "below 20" / "under 20" / "younger than 20"
-  const belowMatch = lower.match(/\b(?:below|under|younger than|less than)\s+(\d+)/);
-  if (belowMatch) {
-    result.max_age = parseInt(belowMatch[1], 10);
-  }
-
-  // "between 20 and 30"
-  const betweenMatch = lower.match(/\bbetween\s+(\d+)\s+and\s+(\d+)/);
-  if (betweenMatch) {
-    result.min_age = parseInt(betweenMatch[1], 10);
-    result.max_age = parseInt(betweenMatch[2], 10);
-  }
-
-  // ── Country ──────────────────────────────────────────────────────────────
-  // Match "from <country>" or "in <country>"
-  const fromMatch = lower.match(/\b(?:from|in)\s+([a-z\s'-]+?)(?:\s+(?:above|below|over|under|between|and|$)|$)/);
-  if (fromMatch) {
-    const countryRaw = fromMatch[1].trim().replace(/\s+$/, '');
-
-    // Try multi-word first, then single word
-    if (COUNTRY_MAP[countryRaw]) {
-      result.country_id = COUNTRY_MAP[countryRaw];
-    } else {
-      // Try matching last word(s) progressively
-      const words = countryRaw.split(' ');
-      for (let i = 0; i < words.length; i++) {
-        const attempt = words.slice(i).join(' ');
-        if (COUNTRY_MAP[attempt]) {
-          result.country_id = COUNTRY_MAP[attempt];
-          break;
-        }
-      }
-    }
-
-    // If still not found, try ISO code directly (2-letter uppercase)
-    if (!result.country_id) {
-      const isoMatch = lower.match(/\b(?:from|in)\s+([a-z]{2})\b/);
-      if (isoMatch) {
-        result.country_id = isoMatch[1].toUpperCase();
-      }
-    }
-  }
-
-  // ── Validity check ───────────────────────────────────────────────────────
-  // If nothing was parsed and query is non-empty, return null → error
-  const hasAnything =
-    result.gender !== undefined ||
-    result.age_group !== undefined ||
-    result.country_id !== undefined ||
-    result.min_age !== undefined ||
-    result.max_age !== undefined;
-
-  if (!hasAnything) return null;
-
-  return result;
-}
-
-// ─── Service ─────────────────────────────────────────────────────────────────
+// import { parseNaturalLanguage } from './nlp/parser';
+import { v7 as uuidv7 } from 'uuid';
 
 @Injectable()
 export class ProfilesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(query: ProfilesQueryDto) {
-    const {
-      gender,
-      age_group,
-      country_id,
-      min_age,
-      max_age,
-      min_gender_probability,
-      min_country_probability,
-      sort_by,
-      order,
-      page,
-      limit,
-    } = query;
 
-    // ── Pagination ──────────────────────────────────────────────────────────
-    const { skip, take, pageNum, limitNum } = parsePagination(page, limit);
 
-    // ── Sorting ─────────────────────────────────────────────────────────────
-    let orderBy: Prisma.ProfileOrderByWithRelationInput = { created_at: 'asc' };
 
-    if (sort_by !== undefined) {
-      if (!VALID_SORT_FIELDS.includes(sort_by)) {
-        throw new BadRequestException('Invalid query parameters');
-      }
-      const direction = order ?? 'asc';
-      if (!VALID_ORDERS.includes(direction)) {
-        throw new BadRequestException('Invalid query parameters');
-      }
-      orderBy = { [sort_by]: direction };
-    } else if (order !== undefined) {
-      // order provided without sort_by
-      throw new BadRequestException('Invalid query parameters');
+  
+  // ─── Build where clause from filters ─────────────────────────────────────────
+  private buildWhereClause(filters: {
+    gender?: string;
+    age_group?: string;
+    country_id?: string;
+    min_age?: number;
+    max_age?: number;
+    min_gender_probability?: number;
+    min_country_probability?: number;
+  }) {
+    const where: any = {};
+
+    if (filters.gender) where.gender = filters.gender;
+    if (filters.age_group) where.age_group = filters.age_group;
+    if (filters.country_id) where.country_id = filters.country_id.toUpperCase();
+
+    if (filters.min_age !== undefined || filters.max_age !== undefined) {
+      where.age = {};
+      if (filters.min_age !== undefined) where.age.gte = filters.min_age;
+      if (filters.max_age !== undefined) where.age.lte = filters.max_age;
     }
 
-    // ── Parse numeric filters ────────────────────────────────────────────────
-    const parsedMinAge =
-      min_age !== undefined ? parseInt(min_age, 10) : undefined;
-    const parsedMaxAge =
-      max_age !== undefined ? parseInt(max_age, 10) : undefined;
-    const parsedMinGenderProb =
-      min_gender_probability !== undefined
-        ? parseFloat(min_gender_probability)
-        : undefined;
-    const parsedMinCountryProb =
-      min_country_probability !== undefined
-        ? parseFloat(min_country_probability)
-        : undefined;
-
-    if (
-      (min_age !== undefined && isNaN(parsedMinAge!)) ||
-      (max_age !== undefined && isNaN(parsedMaxAge!)) ||
-      (min_gender_probability !== undefined && isNaN(parsedMinGenderProb!)) ||
-      (min_country_probability !== undefined && isNaN(parsedMinCountryProb!))
-    ) {
-      throw new UnprocessableEntityException('Invalid query parameters');
+    if (filters.min_gender_probability !== undefined) {
+      where.gender_probability = { gte: filters.min_gender_probability };
     }
 
-    // ── Build where ──────────────────────────────────────────────────────────
-    const where = buildWhereClause({
-      gender,
-      age_group,
-      country_id,
-      min_age: parsedMinAge,
-      max_age: parsedMaxAge,
-      min_gender_probability: parsedMinGenderProb,
-      min_country_probability: parsedMinCountryProb,
-    });
+    if (filters.min_country_probability !== undefined) {
+      where.country_probability = { gte: filters.min_country_probability };
+    }
 
-    // ── Query ────────────────────────────────────────────────────────────────
-    const [total, data] = await this.prisma.$transaction([
-      this.prisma.profile.count({ where }),
-      this.prisma.profile.findMany({ where, orderBy, skip, take }),
-    ]);
-
-    return {
-      status: 'success',
-      page: pageNum,
-      limit: limitNum,
-      total,
-      data,
-    };
+    return where;
   }
 
-  async search(query: NLQueryDto) {
-    const { q, page, limit } = query;
+  // ─── Build order by ───────────────────────────────────────────────────────────
+private buildOrderBy(sort: { sort_by?: string; order?: string }) {
+  const allowedFields = ['age', 'created_at', 'gender_probability'] as const;
 
-    if (!q || q.trim() === '') {
-      throw new BadRequestException('Missing or empty parameter');
-    }
+  type AllowedField = typeof allowedFields[number];
 
-    // ── Parse NL query ───────────────────────────────────────────────────────
-    const parsed = parseNaturalLanguageQuery(q);
+  const field: AllowedField =
+    sort?.sort_by && (allowedFields as readonly string[]).includes(sort.sort_by)
+      ? (sort.sort_by as AllowedField)
+      : 'created_at';
 
-    if (!parsed) {
-      return { status: 'error', message: 'Unable to interpret query' };
-    }
+  const direction = sort?.order === 'asc' ? 'asc' : 'desc';
 
-    // ── Pagination ───────────────────────────────────────────────────────────
-    const { skip, take, pageNum, limitNum } = parsePagination(page, limit);
+  return { [field]: direction };
+}
 
-    // ── Build where ──────────────────────────────────────────────────────────
-    const where = buildWhereClause(parsed);
 
-    // ── Query ────────────────────────────────────────────────────────────────
-    const [total, data] = await this.prisma.$transaction([
+
+
+ parseNaturalLanguage(query: string): Record<string, any> | null {
+  const q = query.toLowerCase();
+  const filters: Record<string, any> = {};
+
+  if (q.includes('male') && !q.includes('female')) filters.gender = 'male';
+  if (q.includes('female')) filters.gender = 'female';
+  if (q.includes('child')) filters.age_group = 'child';
+  if (q.includes('teen')) filters.age_group = 'teenager';
+  if (q.includes('adult')) filters.age_group = 'adult';
+  if (q.includes('senior')) filters.age_group = 'senior';
+
+  const countryMatch = q.match(/from ([a-z]+)/i);
+  if (countryMatch) {
+    const countryMap: Record<string, string> = {
+      nigeria: 'NG', ghana: 'GH', kenya: 'KE', usa: 'US',
+      'united states': 'US', uk: 'GB', 'united kingdom': 'GB',
+    };
+    const country = countryMap[countryMatch[1].toLowerCase()];
+    if (country) filters.country_id = country;
+  }
+
+  const minAgeMatch = q.match(/(?:above|over|older than)\s+(\d+)/);
+  const maxAgeMatch = q.match(/(?:below|under|younger than)\s+(\d+)/);
+  if (minAgeMatch) filters.min_age = parseInt(minAgeMatch[1]);
+  if (maxAgeMatch) filters.max_age = parseInt(maxAgeMatch[1]);
+
+  return Object.keys(filters).length > 0 ? filters : null;
+}
+  // ─── Find all (paginated) ─────────────────────────────────────────────────────
+  async findAll(params: {
+    filters: any;
+    sort: any;
+    page: number;
+    limit: number;
+  }) {
+    const where = this.buildWhereClause(params.filters);
+    const orderBy = this.buildOrderBy(params.sort);
+    const skip = (params.page - 1) * params.limit;
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.profile.findMany({ where, orderBy, skip, take: params.limit }),
       this.prisma.profile.count({ where }),
-      this.prisma.profile.findMany({ where, skip, take }),
     ]);
 
-    return {
-      status: 'success',
-      page: pageNum,
-      limit: limitNum,
-      total,
-      data,
-    };
+    return { data, total };
+  }
+
+  // ─── Find all for export (no pagination) ─────────────────────────────────────
+  async findAllForExport(params: { filters: any; sort: any }) {
+    const where = this.buildWhereClause(params.filters);
+    const orderBy = this.buildOrderBy(params.sort);
+    return this.prisma.profile.findMany({ where, orderBy });
+  }
+
+  // ─── Natural language search ──────────────────────────────────────────────────
+  async search(params: { q: string; page: number; limit: number }) {
+    const filters = this.parseNaturalLanguage(params.q);
+    if (!filters) return { data: [], total: 0, filters: null };
+
+    const { data, total } = await this.findAll({
+      filters,
+      sort: {},
+      page: params.page,
+      limit: params.limit,
+    });
+
+    return { data, total, filters };
+  }
+
+  // ─── Find one ─────────────────────────────────────────────────────────────────
+  async findOne(id: string) {
+    return this.prisma.profile.findUnique({ where: { id } });
+  }
+
+  // ─── Create (admin) ───────────────────────────────────────────────────────────
+  async create(name: string) {
+    // Call external APIs (Stage 1 logic)
+    const [genderData, agifyData, nationalizeData] = await Promise.allSettled([
+      fetch(`https://api.genderize.io?name=${encodeURIComponent(name)}`).then((r) => r.json()),
+      fetch(`https://api.agify.io?name=${encodeURIComponent(name)}`).then((r) => r.json()),
+      fetch(`https://api.nationalize.io?name=${encodeURIComponent(name)}`).then((r) => r.json()),
+    ]);
+
+    const gender =
+      genderData.status === 'fulfilled' ? genderData.value : null;
+    const agify =
+      agifyData.status === 'fulfilled' ? agifyData.value : null;
+    const nationalize =
+      nationalizeData.status === 'fulfilled' ? nationalizeData.value : null;
+
+    const topCountry =
+      nationalize?.country?.sort((a: any, b: any) => b.probability - a.probability)[0] ?? null;
+
+    const age = agify?.age ?? null;
+    const age_group = age
+      ? age < 13
+        ? 'child'
+        : age < 18
+        ? 'teenager'
+        : age < 60
+        ? 'adult'
+        : 'senior'
+      : null;
+
+    const profile = await this.prisma.profile.create({
+      data: {
+        id: uuidv7(),
+        name,
+        gender: gender?.gender ?? null,
+        gender_probability: gender?.probability ?? null,
+        age,
+        ...(age_group && {age_group}),
+        country_id: topCountry?.country_id ?? null,
+        country_name: topCountry?.country_name, // resolved separately if needed
+        country_probability: topCountry?.probability ?? null,
+      },
+    });
+
+    return profile;
+  }
+
+  // ─── Delete (admin) ───────────────────────────────────────────────────────────
+  async remove(id: string) {
+    return this.prisma.profile.delete({ where: { id } });
   }
 }

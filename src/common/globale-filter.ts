@@ -13,11 +13,10 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
 
-    response.setHeader('Access-Control-Allow-Origin', '*');
+    console.error('GLOBAL EXCEPTION:', exception);
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = 'Internal server error';
-
     if (exception instanceof HttpException) {
       status = exception.getStatus();
       const res = exception.getResponse();
@@ -26,7 +25,6 @@ export class GlobalExceptionFilter implements ExceptionFilter {
           ? res
           : (res as any).message ?? 'Invalid query parameters';
     }
-
     response.status(status).json({
       status: 'error',
       message,

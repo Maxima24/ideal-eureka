@@ -8,6 +8,13 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+enum  Role {
+  ANALYST
+  ADMIN
+}
+
+
+
 
 model Profile {
   id                  String   @id @default(uuid()) @db.Uuid
@@ -15,9 +22,9 @@ model Profile {
   gender              String   @db.VarChar
   gender_probability  Float
   age                 Int
-  age_group           String   @db.VarChar
+  age_group          String?   @db.VarChar
   country_id          String   @db.VarChar(2)
-  country_name        String   @db.VarChar
+  country_name        String?   @db.VarChar
   country_probability Float
   created_at          DateTime @default(now()) @db.Timestamptz
 
@@ -26,4 +33,27 @@ model Profile {
   @@index([country_id])
   @@index([age])
   @@map("profiles")
+}
+
+
+model User {
+  id            String    @id  @default(uuid())
+  github_id     String    @unique
+  username      String
+  email         String?
+  avatar_url    String?
+  role          String    @default("analyst")
+  is_active     Boolean   @default(true)
+  last_login_at DateTime?
+  created_at    DateTime  @default(now())
+  tokens        RefreshToken[]
+}
+
+model RefreshToken {
+  id         String   @id  @default(uuid())
+  token      String   @unique
+  user_id    String
+  expires_at DateTime
+  used       Boolean  @default(false)
+  user       User     @relation(fields: [user_id], references: [id])
 }
