@@ -19,7 +19,7 @@ export class AuthController {
   // ─── Web GitHub OAuth Callback ──────────────────────────────────────────────
   
   @Public()
-  @Post('github/web')
+  @Get('github/web')
   async handleWebCallback(
     @Body()
     body: {
