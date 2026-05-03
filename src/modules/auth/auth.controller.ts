@@ -14,7 +14,7 @@ import { AuthService } from './auth.service';
 import { Public } from '../../common/decorators/public.decorator';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { ConfigService } from '@nestjs/config';
-import { Response } from 'express';
+import { Request, Response } from 'express';
 
 @Controller('auth')
 export class AuthController {
@@ -209,11 +209,11 @@ async getMe(@Req() req: any) {
 
 @Public()
 @Post('refresh')
-async refresh(@Body('refresh_token') refreshToken: string , @Res() res:Response) {
+async refresh( refreshToken: string ,@Req() req:Request, @Res({passthrough:true}) res:Response) {
   if (!refreshToken) {
     throw new BadRequestException('refresh_token required');
   }
-  const {accessToken,refreshToken:refresh_token}= await this.authService.refresh(refreshToken);
+  const {accessToken,refreshToken:refresh_token}= await this.authService.refresh(req.cookies.refreshToken );
    const webPortalUrl = this.configService.get<string>('WEB_PORTAL_URL');
      const isProduction = process.env.NODE_ENV === 'production';
 
