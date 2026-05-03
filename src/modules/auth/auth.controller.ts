@@ -8,50 +8,63 @@ import {
   UnauthorizedException,
   UseGuards,
   Query,
+  Res,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { Public } from '../../common/decorators/public.decorator';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
+import { ConfigService } from '@nestjs/config';
+import { Response } from 'express';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(private readonly authService: AuthService,private readonly configService:ConfigService) {}
 
   // ─── Web GitHub OAuth Callback ──────────────────────────────────────────────
   
-  @Public()
-  @Get('github/web')
-  async handleWebCallback(
-   @Query() query: { code: string; redirect_uri?: string; state?: string },
-  ) {
-    console.log('=== WEB CALLBACK RECEIVED ===');
-    console.log('  redirect_uri:', JSON.stringify(query.redirect_uri));
-    console.log('  code length:', query.code?.length);
-    console.log('==============================');
-
-    if (!query.code || !query.redirect_uri) {
-      throw new BadRequestException('Missing required fields: code and redirect_uri');
-    }
-
-    const { accessToken, refreshToken, user } = await this.authService.exchangeCodeForWeb({
-      code: query.code,
-      redirectUri: query.redirect_uri,
-    });
-
-    return {
-      status: 'success',
-      access_token: accessToken,
-      refresh_token: refreshToken,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        avatar_url: user.avatar_url,
-        role: user.role,
-      },
-    };
+ @Public()
+@Get('github/web')
+async handleWebCallback(
+  @Query('code') code: string,
+  @Query('state') state: string,
+  @Req() req: Request,
+  @Res() res: Response
+) {
+  if (!code) {
+    throw new BadRequestException('Missing authorization code');
   }
 
+  const backendUrl = this.configService.get<string>('BACKEND_URL');
+  const redirectUri = `${backendUrl}/auth/github/web`;
+
+  const { accessToken, refreshToken } = await this.authService.exchangeCodeForWeb({
+    code,
+    redirectUri,
+  });
+
+  const isProduction = process.env.NODE_ENV === 'production';
+  const webPortalUrl = this.configService.get<string>('WEB_PORTAL_URL');
+
+  res.clearCookie('oauth_state');
+
+  res.cookie('access_token', accessToken, {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: 'lax',
+    maxAge: 3 * 60 * 1000,
+    path: '/',
+  });
+
+  res.cookie('refresh_token', refreshToken, {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: 'lax',
+    maxAge: 5 * 60 * 1000,
+    path: '/',
+  });
+
+  return res.redirect(`${webPortalUrl}/dashboard`);
+}
   // ─── CLI GitHub OAuth Callback (with PKCE) ──────────────────────────────────
 
   @Public()
