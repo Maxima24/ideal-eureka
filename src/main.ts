@@ -6,7 +6,7 @@ import  cookieParser from "cookie-parser"
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.use(cookieParser())
-  app.enableCors({origin:"https://ideal-eureka-production.up.railway.app",
+  app.enableCors({origin:'https://profiler-umpt-production.up.railway.app',
     credentials:true
   })
   app.useGlobalFilters( new GlobalExceptionFilter())
