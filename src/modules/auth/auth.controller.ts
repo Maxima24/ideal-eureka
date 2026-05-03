@@ -50,7 +50,7 @@ async handleWebCallback(
   res.cookie('access_token', accessToken, {
     httpOnly: true,
     secure: isProduction,
-    sameSite: 'lax',
+    sameSite: isProduction?'none':'lax',
     maxAge: 3 * 60 * 1000,
     path: '/',
   });
@@ -58,7 +58,7 @@ async handleWebCallback(
   res.cookie('refresh_token', refreshToken, {
     httpOnly: true,
     secure: isProduction,
-    sameSite: 'lax',
+    sameSite: isProduction?'none':'lax',
     maxAge: 5 * 60 * 1000,
     path: '/',
   });
@@ -209,10 +209,30 @@ async getMe(@Req() req: any) {
 
 @Public()
 @Post('refresh')
-async refresh(@Body('refresh_token') refreshToken: string) {
+async refresh(@Body('refresh_token') refreshToken: string , @Res() res:Response) {
   if (!refreshToken) {
     throw new BadRequestException('refresh_token required');
   }
-  return this.authService.refresh(refreshToken);
+  const {accessToken,refreshToken:refresh_token}= await this.authService.refresh(refreshToken);
+   const webPortalUrl = this.configService.get<string>('WEB_PORTAL_URL');
+     const isProduction = process.env.NODE_ENV === 'production';
+
+
+  res.cookie('access_token', accessToken, {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction?'none':'lax',
+    maxAge: 3 * 60 * 1000,
+    path: '/',
+  });
+
+  res.cookie('refresh_token', refresh_token, {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction?'none':'lax',
+    maxAge: 5 * 60 * 1000,
+    path: '/',
+  });
+  
 }
 }
